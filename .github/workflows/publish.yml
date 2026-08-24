@@ -1,90 +1,68 @@
-name: Build and Publish Wheels to PyPI
+name: Build and Publish Wheels
 
 on:
   push:
     tags:
       - 'v*'
-  release:
-    types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
-  linux:
-    runs-on: ubuntu-latest
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }} (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+          # Linux aarch64 (cross-compile)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            manylinux: auto
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
     steps:
       - uses: actions/checkout@v4
-      - name: Set up QEMU
-        if: matrix.target == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-      - uses: actions/setup-python@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: '3.11'
-      - name: Build wheels
+          targets: ${{ matrix.target }}
+
+      - name: Build Wheels via Maturin
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
-          manylinux: auto
-      - name: Upload wheels
+          manylinux: ${{ matrix.manylinux || 'off' }}
+
+      - name: Upload Wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-${{ matrix.target }}
-          path: dist
+          name: wheels-${{ matrix.target }}
+          path: dist/*.whl
 
-  windows:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          architecture: ${{ matrix.target }}
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-windows-${{ matrix.target }}
-          path: dist
-
-  macos:
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64, aarch64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-macos-${{ matrix.target }}
-          path: dist
-
-  sdist:
+  build_sdist:
+    name: Build Source Distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build sdist
+      - name: Build sdist via Maturin
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
@@ -92,20 +70,28 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-sdist
-          path: dist
+          name: sdist
+          path: dist/*
 
-  publish:
+  release:
+    name: Release to GitHub and PyPI
+    needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    needs: [linux, windows, macos, sdist]
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/*
+          generate_release_notes: true
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
+          packages-dir: dist/

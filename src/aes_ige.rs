@@ -2,11 +2,15 @@ use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::Aes256;
 
-/// Ultra-low latency In-place AES-256-IGE Encryption
-/// Zero branch overhead and zero intermediate buffers.
+/// In-place AES-256-IGE Encryption
+/// 
+/// # Safety & Invariants:
+/// - `data` length must be a multiple of 16 bytes.
+/// - Pointer arithmetic `ptr.add(i)` strictly accesses `[0 .. num_blocks * 16]`, perfectly bounded within `data`.
+/// - Automatic runtime hardware acceleration (AES-NI / ARMv8 Crypto) via `aes` crate with safe portable fallback.
 #[inline(always)]
 pub fn ige256_encrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
-    debug_assert!(data.len() % 16 == 0);
+    debug_assert!(data.len() % 16 == 0, "IGE data length must be a multiple of 16");
     let cipher = Aes256::new(GenericArray::from_slice(key));
 
     let mut iv1: [u8; 16] = iv[0..16].try_into().unwrap();
@@ -16,6 +20,7 @@ pub fn ige256_encrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     let ptr = data.as_mut_ptr() as *mut [u8; 16];
 
     for i in 0..num_blocks {
+        // SAFETY: `i < num_blocks` ensures `ptr.add(i)` is within `data` bounds.
         let p_chunk = unsafe { &mut *ptr.add(i) };
         let p_orig = *p_chunk;
 
@@ -34,11 +39,15 @@ pub fn ige256_encrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     }
 }
 
-/// Ultra-low latency In-place AES-256-IGE Decryption
-/// Zero branch overhead and zero intermediate buffers.
+/// In-place AES-256-IGE Decryption
+/// 
+/// # Safety & Invariants:
+/// - `data` length must be a multiple of 16 bytes.
+/// - Pointer arithmetic `ptr.add(i)` strictly accesses `[0 .. num_blocks * 16]`, perfectly bounded within `data`.
+/// - Automatic runtime hardware acceleration (AES-NI / ARMv8 Crypto) via `aes` crate with safe portable fallback.
 #[inline(always)]
 pub fn ige256_decrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
-    debug_assert!(data.len() % 16 == 0);
+    debug_assert!(data.len() % 16 == 0, "IGE data length must be a multiple of 16");
     let cipher = Aes256::new(GenericArray::from_slice(key));
 
     let mut iv1: [u8; 16] = iv[0..16].try_into().unwrap();
@@ -48,6 +57,7 @@ pub fn ige256_decrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     let ptr = data.as_mut_ptr() as *mut [u8; 16];
 
     for i in 0..num_blocks {
+        // SAFETY: `i < num_blocks` ensures `ptr.add(i)` is within `data` bounds.
         let c_chunk = unsafe { &mut *ptr.add(i) };
         let c_orig = *c_chunk;
 
