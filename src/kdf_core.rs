@@ -3,13 +3,13 @@ use sha2::{Digest, Sha256};
 /// MTProto 2.0 Key Derivation Function (KDF)
 /// Official Telegram MTProto 2.0 specification (https://core.telegram.org/mtproto/description):
 ///   x = 0 (client -> server) or 8 (server -> client)
-///   sha256_a = SHA256(msg_key + substr(auth_key, x, 36))
-///   sha256_b = SHA256(substr(auth_key, 40 + x, 36) + msg_key)
+///   sha256_a = SHA256(msg_key (16B) + auth_key[x .. x + 36] (36B))   -> 52B single-block SHA-256
+///   sha256_b = SHA256(auth_key[40 + x .. 40 + x + 36] (36B) + msg_key (16B)) -> 52B single-block SHA-256
 ///
 ///   aes_key = sha256_a[0..8] + sha256_b[8..24] + sha256_a[24..32]
 ///   aes_iv  = sha256_b[0..8] + sha256_a[8..24] + sha256_b[24..32]
 #[inline(always)]
-pub fn kdf(auth_key: &[u8; 256], msg_key: &[u8; 16], is_outgoing: bool) -> ([u8; 32], [u8; 32]) {
+pub fn kdf_calc(auth_key: &[u8; 256], msg_key: &[u8; 16], is_outgoing: bool) -> ([u8; 32], [u8; 32]) {
     let x: usize = if is_outgoing { 0 } else { 8 };
 
     // 1. sha256_a = SHA256(msg_key + auth_key[x .. x + 36])

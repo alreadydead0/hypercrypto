@@ -2,7 +2,8 @@ use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::Aes256;
 
-/// AES-256-IGE Encryption In-place
+/// In-place AES-256-IGE Encryption
+/// Optimized for zero intermediate buffer allocations and maximum CPU cache locality.
 #[inline(always)]
 pub fn ige256_encrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     debug_assert!(data.len() % 16 == 0);
@@ -13,27 +14,30 @@ pub fn ige256_encrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
 
     let chunks = data.chunks_exact_mut(16);
     for chunk in chunks {
-        let p = <&mut [u8; 16]>::try_from(chunk).unwrap();
-        let mut t = [0u8; 16];
+        let p_chunk: &mut [u8; 16] = chunk.try_into().unwrap();
+        let p_orig = *p_chunk;
+
+        // 1. p_chunk = p_i ^ iv1
         for i in 0..16 {
-            t[i] = p[i] ^ iv1[i];
+            p_chunk[i] ^= iv1[i];
         }
 
-        let mut block = *GenericArray::from_slice(&t);
-        cipher.encrypt_block(&mut block);
+        // 2. p_chunk = E(p_i ^ iv1) in-place
+        cipher.encrypt_block(GenericArray::from_mut_slice(p_chunk));
 
-        let mut c = [0u8; 16];
+        // 3. c_i = E(p_i ^ iv1) ^ iv2 in-place
         for i in 0..16 {
-            c[i] = block[i] ^ iv2[i];
+            p_chunk[i] ^= iv2[i];
         }
 
-        iv1 = c;
-        iv2 = *p;
-        p.copy_from_slice(&c);
+        // 4. Update IVs
+        iv1 = *p_chunk;
+        iv2 = p_orig;
     }
 }
 
-/// AES-256-IGE Decryption In-place
+/// In-place AES-256-IGE Decryption
+/// Optimized for zero intermediate buffer allocations and maximum CPU cache locality.
 #[inline(always)]
 pub fn ige256_decrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     debug_assert!(data.len() % 16 == 0);
@@ -44,24 +48,24 @@ pub fn ige256_decrypt_inplace(data: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
 
     let chunks = data.chunks_exact_mut(16);
     for chunk in chunks {
-        let c = <&mut [u8; 16]>::try_from(chunk).unwrap();
-        let c_copy = *c;
+        let c_chunk: &mut [u8; 16] = chunk.try_into().unwrap();
+        let c_orig = *c_chunk;
 
-        let mut t = [0u8; 16];
+        // 1. c_chunk = c_i ^ iv2
         for i in 0..16 {
-            t[i] = c[i] ^ iv2[i];
+            c_chunk[i] ^= iv2[i];
         }
 
-        let mut block = *GenericArray::from_slice(&t);
-        cipher.decrypt_block(&mut block);
+        // 2. c_chunk = D(c_i ^ iv2) in-place
+        cipher.decrypt_block(GenericArray::from_mut_slice(c_chunk));
 
-        let mut p = [0u8; 16];
+        // 3. p_i = D(c_i ^ iv2) ^ iv1 in-place
         for i in 0..16 {
-            p[i] = block[i] ^ iv1[i];
+            c_chunk[i] ^= iv1[i];
         }
 
-        iv1 = c_copy;
-        iv2 = p;
-        c.copy_from_slice(&p);
+        // 4. Update IVs
+        iv1 = c_orig;
+        iv2 = *c_chunk;
     }
 }

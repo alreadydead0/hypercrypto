@@ -1,28 +1,31 @@
 pub mod aes_ctr;
 pub mod aes_ige;
-pub mod kdf_engine;
-pub mod pack_engine;
+pub mod kdf_core;
+pub mod pack_core;
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 use sha2::{Digest, Sha256};
 
 use crate::aes_ctr::Aes256CtrState;
 use crate::aes_ige as ige_internal;
-use crate::kdf_engine as kdf_internal;
-use crate::pack_engine as pack_internal;
+use crate::kdf_core as kdf_internal;
+use crate::pack_core as pack_internal;
+
+const GIL_RELEASE_THRESHOLD: usize = 16384;
 
 struct RawSlice(*mut u8, usize);
 unsafe impl Send for RawSlice {}
 
 impl RawSlice {
+    #[inline(always)]
     unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
         std::slice::from_raw_parts_mut(self.0, self.1)
     }
 }
 
-/// Ultra-fast SHA-256 using CPU assembly
+/// Ultra-fast SHA-256
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
@@ -32,7 +35,7 @@ fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
     PyBytes::new(py, &result)
 }
 
-/// AES-256-IGE Encryption (Returns newly allocated bytes)
+/// AES-256-IGE Encryption (Zero-Rust-Heap-Allocation via PyBytes::new_with)
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
@@ -42,19 +45,22 @@ fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
     let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
 
-    let mut buf = data.to_vec();
-    if data.len() >= 16384 {
-        py.allow_threads(|| {
-            ige_internal::ige256_encrypt_inplace(&mut buf, &key_arr, &iv_arr);
-        });
-    } else {
-        ige_internal::ige256_encrypt_inplace(&mut buf, &key_arr, &iv_arr);
-    }
-
-    Ok(PyBytes::new(py, &buf))
+    PyBytes::new_with(py, data.len(), |buf| {
+        buf.copy_from_slice(data);
+        if buf.len() >= GIL_RELEASE_THRESHOLD {
+            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
+            py.allow_threads(move || {
+                let s = unsafe { raw.as_mut_slice() };
+                ige_internal::ige256_encrypt_inplace(s, &key_arr, &iv_arr);
+            });
+        } else {
+            ige_internal::ige256_encrypt_inplace(buf, &key_arr, &iv_arr);
+        }
+        Ok(())
+    })
 }
 
-/// AES-256-IGE Decryption (Returns newly allocated bytes)
+/// AES-256-IGE Decryption (Zero-Rust-Heap-Allocation via PyBytes::new_with)
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
@@ -64,70 +70,65 @@ fn ige256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
     let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
 
-    let mut buf = data.to_vec();
-    if data.len() >= 16384 {
-        py.allow_threads(|| {
-            ige_internal::ige256_decrypt_inplace(&mut buf, &key_arr, &iv_arr);
-        });
-    } else {
-        ige_internal::ige256_decrypt_inplace(&mut buf, &key_arr, &iv_arr);
-    }
-
-    Ok(PyBytes::new(py, &buf))
-}
-
-/// In-Place AES-256-IGE Encryption (Zero-copy mutation on bytearray)
-#[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ige256_encrypt_inplace(py: Python<'_>, data: &Bound<'_, PyAny>, key: &[u8], iv: &[u8]) -> PyResult<()> {
-    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
-
-    if let Ok(bytearray) = data.downcast::<PyByteArray>() {
-        let slice = unsafe { bytearray.as_bytes_mut() };
-        if slice.len() % 16 != 0 {
-            return Err(PyValueError::new_err("Data length must be a multiple of 16"));
-        }
-        if slice.len() >= 16384 {
-            let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
-            py.allow_threads(move || {
-                let s = unsafe { raw.as_mut_slice() };
-                ige_internal::ige256_encrypt_inplace(s, &key_arr, &iv_arr);
-            });
-        } else {
-            ige_internal::ige256_encrypt_inplace(slice, &key_arr, &iv_arr);
-        }
-        Ok(())
-    } else {
-        Err(PyTypeError::new_err("data must be a mutable bytearray"))
-    }
-}
-
-/// In-Place AES-256-IGE Decryption (Zero-copy mutation on bytearray)
-#[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ige256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyAny>, key: &[u8], iv: &[u8]) -> PyResult<()> {
-    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
-
-    if let Ok(bytearray) = data.downcast::<PyByteArray>() {
-        let slice = unsafe { bytearray.as_bytes_mut() };
-        if slice.len() % 16 != 0 {
-            return Err(PyValueError::new_err("Data length must be a multiple of 16"));
-        }
-        if slice.len() >= 16384 {
-            let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
+    PyBytes::new_with(py, data.len(), |buf| {
+        buf.copy_from_slice(data);
+        if buf.len() >= GIL_RELEASE_THRESHOLD {
+            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
             py.allow_threads(move || {
                 let s = unsafe { raw.as_mut_slice() };
                 ige_internal::ige256_decrypt_inplace(s, &key_arr, &iv_arr);
             });
         } else {
-            ige_internal::ige256_decrypt_inplace(slice, &key_arr, &iv_arr);
+            ige_internal::ige256_decrypt_inplace(buf, &key_arr, &iv_arr);
         }
         Ok(())
-    } else {
-        Err(PyTypeError::new_err("data must be a mutable bytearray"))
+    })
+}
+
+/// In-Place AES-256-IGE Encryption
+#[pyfunction]
+#[pyo3(signature = (data, key, iv))]
+fn ige256_encrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
+    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
+    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
+
+    let slice = unsafe { data.as_bytes_mut() };
+    if slice.len() % 16 != 0 {
+        return Err(PyValueError::new_err("Data length must be a multiple of 16"));
     }
+    if slice.len() >= GIL_RELEASE_THRESHOLD {
+        let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
+        py.allow_threads(move || {
+            let s = unsafe { raw.as_mut_slice() };
+            ige_internal::ige256_encrypt_inplace(s, &key_arr, &iv_arr);
+        });
+    } else {
+        ige_internal::ige256_encrypt_inplace(slice, &key_arr, &iv_arr);
+    }
+    Ok(())
+}
+
+/// In-Place AES-256-IGE Decryption
+#[pyfunction]
+#[pyo3(signature = (data, key, iv))]
+fn ige256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
+    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
+    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
+
+    let slice = unsafe { data.as_bytes_mut() };
+    if slice.len() % 16 != 0 {
+        return Err(PyValueError::new_err("Data length must be a multiple of 16"));
+    }
+    if slice.len() >= GIL_RELEASE_THRESHOLD {
+        let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
+        py.allow_threads(move || {
+            let s = unsafe { raw.as_mut_slice() };
+            ige_internal::ige256_decrypt_inplace(s, &key_arr, &iv_arr);
+        });
+    } else {
+        ige_internal::ige256_decrypt_inplace(slice, &key_arr, &iv_arr);
+    }
+    Ok(())
 }
 
 /// AES-256-CTR Encryption / Decryption
@@ -137,18 +138,21 @@ fn ctr256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
     let iv_arr: [u8; 16] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 16 bytes"))?;
 
-    let mut buf = data.to_vec();
-    if data.len() >= 16384 {
-        py.allow_threads(|| {
+    PyBytes::new_with(py, data.len(), |buf| {
+        buf.copy_from_slice(data);
+        if buf.len() >= GIL_RELEASE_THRESHOLD {
+            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
+            py.allow_threads(move || {
+                let s = unsafe { raw.as_mut_slice() };
+                let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
+                state.process_inplace(s);
+            });
+        } else {
             let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-            state.process_inplace(&mut buf);
-        });
-    } else {
-        let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-        state.process_inplace(&mut buf);
-    }
-
-    Ok(PyBytes::new(py, &buf))
+            state.process_inplace(buf);
+        }
+        Ok(())
+    })
 }
 
 /// AES-256-CTR Decryption (Symmetric to encryption)
@@ -161,33 +165,29 @@ fn ctr256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
 /// In-Place AES-256-CTR Processing
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
-fn ctr256_encrypt_inplace(py: Python<'_>, data: &Bound<'_, PyAny>, key: &[u8], iv: &[u8]) -> PyResult<()> {
+fn ctr256_encrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
     let iv_arr: [u8; 16] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 16 bytes"))?;
 
-    if let Ok(bytearray) = data.downcast::<PyByteArray>() {
-        let slice = unsafe { bytearray.as_bytes_mut() };
-        if slice.len() >= 16384 {
-            let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
-            py.allow_threads(move || {
-                let s = unsafe { raw.as_mut_slice() };
-                let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-                state.process_inplace(s);
-            });
-        } else {
+    let slice = unsafe { data.as_bytes_mut() };
+    if slice.len() >= GIL_RELEASE_THRESHOLD {
+        let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
+        py.allow_threads(move || {
+            let s = unsafe { raw.as_mut_slice() };
             let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-            state.process_inplace(slice);
-        }
-        Ok(())
+            state.process_inplace(s);
+        });
     } else {
-        Err(PyTypeError::new_err("data must be a mutable bytearray"))
+        let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
+        state.process_inplace(slice);
     }
+    Ok(())
 }
 
 /// In-Place AES-256-CTR Decryption (Alias)
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
-fn ctr256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyAny>, key: &[u8], iv: &[u8]) -> PyResult<()> {
+fn ctr256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
     ctr256_encrypt_inplace(py, data, key, iv)
 }
 
@@ -207,12 +207,11 @@ fn kdf<'py>(
         .try_into()
         .map_err(|_| PyValueError::new_err("msg_key must be 16 bytes"))?;
 
-    let (aes_key, aes_iv) = kdf_internal::kdf(&auth_arr, &msg_arr, is_outgoing);
+    let (aes_key, aes_iv) = kdf_internal::kdf_calc(&auth_arr, &msg_arr, is_outgoing);
     Ok((PyBytes::new(py, &aes_key), PyBytes::new(py, &aes_iv)))
 }
 
 /// MTProto 2.0 In-Place KDF (Zero-Allocation Ultra Low Latency)
-/// Writes (aes_key, aes_iv) directly into pre-allocated bytearrays without Python heap allocations!
 #[pyfunction]
 #[pyo3(signature = (auth_key, msg_key, is_outgoing, key_out, iv_out))]
 fn kdf_into(
@@ -230,7 +229,7 @@ fn kdf_into(
         .try_into()
         .map_err(|_| PyValueError::new_err("msg_key must be 16 bytes"))?;
 
-    let (aes_key, aes_iv) = kdf_internal::kdf(&auth_arr, &msg_arr, is_outgoing);
+    let (aes_key, aes_iv) = kdf_internal::kdf_calc(&auth_arr, &msg_arr, is_outgoing);
 
     let k_slice = unsafe { key_out.as_bytes_mut() };
     if k_slice.len() < 32 {
@@ -259,7 +258,7 @@ fn pack_message<'py>(
     let auth_arr: [u8; 256] = auth_key
         .try_into()
         .map_err(|_| PyValueError::new_err("auth_key must be 256 bytes"))?;
-    let packed = pack_internal::pack_message(&auth_arr, message, is_outgoing);
+    let packed = pack_internal::pack_message_impl(&auth_arr, message, is_outgoing);
     Ok(PyBytes::new(py, &packed))
 }
 
@@ -275,7 +274,7 @@ fn unpack_message<'py>(
     let auth_arr: [u8; 256] = auth_key
         .try_into()
         .map_err(|_| PyValueError::new_err("auth_key must be 256 bytes"))?;
-    match pack_internal::unpack_message(&auth_arr, encrypted_packet, is_outgoing) {
+    match pack_internal::unpack_message_impl(&auth_arr, encrypted_packet, is_outgoing) {
         Ok(unpacked) => Ok(PyBytes::new(py, &unpacked)),
         Err(err) => Err(PyValueError::new_err(err)),
     }

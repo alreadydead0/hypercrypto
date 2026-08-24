@@ -2,6 +2,7 @@ use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes256;
 
+/// High-throughput AES-256-CTR State with 8-way parallel hardware unrolling.
 pub struct Aes256CtrState {
     cipher: Aes256,
     counter: [u8; 16],
@@ -38,14 +39,14 @@ impl Aes256CtrState {
         let mut offset = 0;
         let len = data.len();
 
-        // 1. Drain remaining keystream bytes from previous block
+        // 1. Drain remaining keystream bytes from previous invocation
         while self.buffer_offset < 16 && offset < len {
             data[offset] ^= self.keystream_buffer[self.buffer_offset];
             self.buffer_offset += 1;
             offset += 1;
         }
 
-        // 2. 8-Way Unrolled Parallel AES-NI Block Processing (128 bytes at once)
+        // 2. 8-Way Unrolled Parallel Block Processing (128 bytes at once)
         while offset + 128 <= len {
             let mut blocks = [GenericArray::<u8, aes::cipher::typenum::U16>::default(); 8];
             for i in 0..8 {
