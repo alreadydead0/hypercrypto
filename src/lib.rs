@@ -29,9 +29,7 @@ impl RawSlice {
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
+    let result = Sha256::digest(data);
     PyBytes::new(py, &result)
 }
 
@@ -247,6 +245,7 @@ fn kdf_into(
 }
 
 /// Pack MTProto 2.0 Message (Padding -> MsgKey -> KDF -> AES-IGE)
+/// Optimized with PyBytes::new_with (Zero Rust heap allocations)
 #[pyfunction]
 #[pyo3(signature = (auth_key, message, is_outgoing))]
 fn pack_message<'py>(
@@ -258,11 +257,19 @@ fn pack_message<'py>(
     let auth_arr: [u8; 256] = auth_key
         .try_into()
         .map_err(|_| PyValueError::new_err("auth_key must be 256 bytes"))?;
-    let packed = pack_internal::pack_message_impl(&auth_arr, message, is_outgoing);
-    Ok(PyBytes::new(py, &packed))
+    let msg_len = message.len();
+    let padding_len = 16 - (msg_len % 16);
+    let total_padding = if padding_len < 12 { padding_len + 16 } else { padding_len };
+    let total_len = 16 + msg_len + total_padding;
+
+    PyBytes::new_with(py, total_len, |buf| {
+        pack_internal::pack_message_into(&auth_arr, message, is_outgoing, buf);
+        Ok(())
+    })
 }
 
 /// Unpack MTProto 2.0 Message (AES-IGE Decrypt -> MsgKey Check)
+/// Optimized with PyBytes::new_with (Zero Rust heap allocations)
 #[pyfunction]
 #[pyo3(signature = (auth_key, encrypted_packet, is_outgoing))]
 fn unpack_message<'py>(
@@ -271,13 +278,29 @@ fn unpack_message<'py>(
     encrypted_packet: &[u8],
     is_outgoing: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
+    if encrypted_packet.len() < 32 {
+        return Err(PyValueError::new_err("Encrypted packet too short"));
+    }
     let auth_arr: [u8; 256] = auth_key
         .try_into()
         .map_err(|_| PyValueError::new_err("auth_key must be 256 bytes"))?;
-    match pack_internal::unpack_message_impl(&auth_arr, encrypted_packet, is_outgoing) {
-        Ok(unpacked) => Ok(PyBytes::new(py, &unpacked)),
-        Err(err) => Err(PyValueError::new_err(err)),
+    let payload_len = encrypted_packet.len() - 16;
+
+    let mut err_msg: Option<&'static str> = None;
+    let res = PyBytes::new_with(py, payload_len, |buf| {
+        match pack_internal::unpack_message_into(&auth_arr, encrypted_packet, is_outgoing, buf) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                err_msg = Some(e);
+                Ok(())
+            }
+        }
+    })?;
+
+    if let Some(e) = err_msg {
+        return Err(PyValueError::new_err(e));
     }
+    Ok(res)
 }
 
 /// HyperCrypto Python C-Extension Module
