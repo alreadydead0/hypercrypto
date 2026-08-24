@@ -6,7 +6,7 @@ pub mod pack_engine;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
-use ring::digest::{digest, SHA256};
+use sha2::{Digest, Sha256};
 
 use crate::aes_ctr::Aes256CtrState;
 use crate::aes_ige as ige_internal;
@@ -26,8 +26,10 @@ impl RawSlice {
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
-    let d = digest(&SHA256, data);
-    PyBytes::new(py, d.as_ref())
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    PyBytes::new(py, &result)
 }
 
 /// AES-256-IGE Encryption (Returns newly allocated bytes)
