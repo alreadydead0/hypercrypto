@@ -306,7 +306,7 @@ fn unpack_message<'py>(
 /// HyperCrypto Python C-Extension Module
 #[pymodule]
 fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", "0.1.1")?;
     m.add_function(wrap_pyfunction!(sha256, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_encrypt, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_decrypt, m)?)?;

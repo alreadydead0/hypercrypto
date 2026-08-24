@@ -18,7 +18,7 @@ from .hypercrypto import (
     unpack_message,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "sha256",
     "ige256_encrypt",
