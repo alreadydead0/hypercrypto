@@ -1,11 +1,9 @@
- target/
-.venv/
-__pycache__/
+target/
 *.pyd
 *.so
-*.dll
+*.dylib
+__pycache__/
 *.egg-info/
-build/
 dist/
-.pytest_cache/
-
+build/
+.venv/
