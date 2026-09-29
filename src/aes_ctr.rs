@@ -302,8 +302,8 @@ pub mod ni {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -508,8 +508,8 @@ pub mod ni {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -802,8 +802,8 @@ pub mod vaes256 {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -937,8 +937,8 @@ pub mod vaes256 {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -1162,8 +1162,8 @@ pub mod vaes512 {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -1308,8 +1308,8 @@ pub mod vaes512 {
             if offset == 0 {
                 increment_counter(iv);
             }
+            state[0] = offset as u8;
             if data_idx == data_len {
-                state[0] = offset as u8;
                 return;
             }
         }
@@ -1485,8 +1485,8 @@ pub fn ctr256_process_fallback(
         if offset == 0 {
             increment_counter(iv);
         }
+        state[0] = offset as u8;
         if data_idx == data_len {
-            state[0] = offset as u8;
             return;
         }
     }
@@ -1561,8 +1561,8 @@ pub fn ctr256_process_inplace_fallback(
         if offset == 0 {
             increment_counter(iv);
         }
+        state[0] = offset as u8;
         if data_idx == data_len {
-            state[0] = offset as u8;
             return;
         }
     }

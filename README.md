@@ -15,7 +15,17 @@ Ultra high-performance, memory-efficient cryptographic extensions for Telegram M
 pip install hypercrypto
 ```
 
-No Rust compiler or external C dependencies required for installation.
+No Rust compiler or external C dependencies required for installation (pre-built binary wheels available).
+
+### Building from Source
+Building from source requires **Rust 1.89+** (for Vector AES `vaes` intrinsics support) and Python 3.9+:
+
+```bash
+git clone https://github.com/alreadydead0/hypercrypto.git
+cd hypercrypto
+pip install maturin
+maturin develop --release
+```
 
 ## API Reference
 
@@ -63,28 +73,28 @@ unpacked_payload = hypercrypto.unpack_message(auth_key: bytes, encrypted_packet:
 > Measured on AMD Athlon Silver 3050U (AES, AVX2, SSSE3) | Windows 11 | Python 3.13.5 (min of 7 iterations)
 
 #### 1. Zero-Copy In-Place API (`ctr256_encrypt_inplace`)
-| Payload Size | WarpCrypto 2.0.7 | HyperCrypto 0.1.4 | Speedup vs Warp |
+| Payload Size | WarpCrypto 2.0.7 | HyperCrypto 0.1.5 | Speedup vs Warp |
 | :--- | :--- | :--- | :--- |
-| **4 KB** | 1.23 GB/s | **3.67 GB/s** | **2.99x** |
-| **16 KB** | 1.42 GB/s | **4.70 GB/s** | **3.30x** |
-| **64 KB** | 1.44 GB/s | **5.01 GB/s** | **3.46x** |
-| **256 KB** | 1.57 GB/s | **5.15 GB/s** | **3.29x** |
-| **512 KB** | 1.33 GB/s | **5.05 GB/s** | **3.79x** |
-| **1 MB** | 955 MB/s | **4.98 GB/s** | **5.33x** |
-| **4 MB** | 1.05 GB/s | **5.05 GB/s** | **4.82x** |
-| **10 MB** | 887 MB/s | **4.80 GB/s** | **5.54x** |
-| **16 MB** | 881 MB/s | **4.62 GB/s** | **5.37x** |
+| **4 KB** | 1.15 GB/s | **3.79 GB/s** | **3.28x** |
+| **16 KB** | 1.46 GB/s | **4.74 GB/s** | **3.24x** |
+| **64 KB** | 1.41 GB/s | **4.97 GB/s** | **3.52x** |
+| **256 KB** | 1.48 GB/s | **4.54 GB/s** | **3.07x** |
+| **512 KB** | 885 MB/s | **4.51 GB/s** | **5.22x** |
+| **1 MB** | 859 MB/s | **5.09 GB/s** | **6.07x** |
+| **4 MB** | 759 MB/s | **4.21 GB/s** | **5.67x** |
+| **10 MB** | 556 MB/s | **4.68 GB/s** | **8.62x** |
+| **16 MB** | 636 MB/s | **3.18 GB/s** | **5.12x** |
 
 #### 2. Immutable Bytes API (`ctr256_encrypt`)
-| Payload Size | TgCrypto 1.2.5 | WarpCrypto 2.0.7 | HyperCrypto 0.1.4 | Speedup vs Warp |
+| Payload Size | TgCrypto 1.2.5 | WarpCrypto 2.0.7 | HyperCrypto 0.1.5 | Speedup vs Warp |
 | :--- | :--- | :--- | :--- | :--- |
-| **4 KB** | 72.9 MB/s | 1.02 GB/s | **3.07 GB/s** | **3.02x** |
-| **16 KB** | 81.6 MB/s | 1.26 GB/s | **3.90 GB/s** | **3.09x** |
-| **64 KB** | 84.6 MB/s | 1.47 GB/s | **3.97 GB/s** | **2.69x** |
-| **256 KB** | 79.9 MB/s | 1.52 GB/s | **4.46 GB/s** | **2.93x** |
-| **512 KB** | 77.0 MB/s | 1.17 GB/s | **2.48 GB/s** | **2.12x** |
-| **1 MB** | 85.1 MB/s | 994 MB/s | **1.89 GB/s** | **1.94x** |
-| **10 MB** | 85.6 MB/s | 825 MB/s | **1.89 GB/s** | **2.35x** |
+| **4 KB** | 83.8 MB/s | 1.19 GB/s | **3.14 GB/s** | **2.63x** |
+| **16 KB** | 78.6 MB/s | 1.41 GB/s | **3.61 GB/s** | **2.55x** |
+| **64 KB** | 83.0 MB/s | 1.36 GB/s | **4.40 GB/s** | **3.23x** |
+| **256 KB** | 85.0 MB/s | 1.52 GB/s | **4.54 GB/s** | **3.00x** |
+| **512 KB** | 77.9 MB/s | 891 MB/s | **1.88 GB/s** | **2.16x** |
+| **1 MB** | 80.0 MB/s | 915 MB/s | **1.92 GB/s** | **2.15x** |
+| **10 MB** | 73.9 MB/s | 822 MB/s | **1.75 GB/s** | **2.18x** |
 
 ## License
 

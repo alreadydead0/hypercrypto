@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-09-29
+
+### Fixed
+- Fix: CTR streaming corrupted output/iv/state on VAES paths when a chunk ends mid-block and the next chunk continues past it. Affects 0.1.4 on CPUs with VAES. Upgrade recommended.
+- Fixed partial-block state byte update ordering across all SIMD and fallback kernels (`vaes512`, `vaes256`, `ni`, `portable`) so downstream tail kernels receive clean zero-state offset.
+- Added comprehensive streaming regression test suite (`tests/test_ctr_streaming_regression.py`) covering partial-block streaming grid, fixed regression cases, and 400 random fuzz trials.
+- Added `_has_cpu_feature` binding for explicit CPU feature queries.
+- Added CI test matrix validating `auto`, `vaes512`, `vaes256`, `aesni`, and `portable` dispatch paths.
+
 ## [0.1.4] - 2026-09-29
 
 ### Added

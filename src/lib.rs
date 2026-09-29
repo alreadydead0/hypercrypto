@@ -508,10 +508,34 @@ fn _get_force_mode() -> &'static str {
     }
 }
 
+/// Check if the host CPU supports a specific hardware instruction feature
+#[pyfunction]
+fn _has_cpu_feature(feature: &str) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        match feature.to_lowercase().as_str() {
+            "vaes" => is_x86_feature_detected!("vaes"),
+            "avx512f" => is_x86_feature_detected!("avx512f"),
+            "avx512vl" => is_x86_feature_detected!("avx512vl"),
+            "avx512bw" => is_x86_feature_detected!("avx512bw"),
+            "avx2" => is_x86_feature_detected!("avx2"),
+            "aes" => is_x86_feature_detected!("aes"),
+            "sse2" => is_x86_feature_detected!("sse2"),
+            "ssse3" => is_x86_feature_detected!("ssse3"),
+            _ => false,
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = feature;
+        false
+    }
+}
+
 /// HyperCrypto Python C-Extension Module
 #[pymodule]
 fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", "0.1.4")?;
+    m.add("__version__", "0.1.5")?;
     m.add_function(wrap_pyfunction!(sha256, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_encrypt, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_decrypt, m)?)?;
@@ -527,5 +551,6 @@ fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unpack_message, m)?)?;
     m.add_function(wrap_pyfunction!(_set_force_mode, m)?)?;
     m.add_function(wrap_pyfunction!(_get_force_mode, m)?)?;
+    m.add_function(wrap_pyfunction!(_has_cpu_feature, m)?)?;
     Ok(())
 }
