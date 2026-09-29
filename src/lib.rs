@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 use sha2::{Digest, Sha256};
 
-use crate::aes_ctr::Aes256CtrState;
+use crate::aes_ctr as ctr_internal;
 use crate::aes_ige as ige_internal;
 use crate::kdf_core as kdf_internal;
 use crate::pack_core as pack_internal;
@@ -25,6 +25,16 @@ impl RawSlice {
     }
 }
 
+struct RawConstSlice(*const u8, usize);
+unsafe impl Send for RawConstSlice {}
+
+impl RawConstSlice {
+    #[inline(always)]
+    unsafe fn as_slice(&self) -> &[u8] {
+        std::slice::from_raw_parts(self.0, self.1)
+    }
+}
+
 /// Ultra-fast SHA-256
 #[pyfunction]
 #[pyo3(signature = (data))]
@@ -37,11 +47,12 @@ fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
+    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
+
     if data.len() % 16 != 0 {
         return Err(PyValueError::new_err("Data length must be a multiple of 16"));
     }
-    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
 
     PyBytes::new_with(py, data.len(), |buf| {
         buf.copy_from_slice(data);
@@ -62,11 +73,12 @@ fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
+    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
+
     if data.len() % 16 != 0 {
         return Err(PyValueError::new_err("Data length must be a multiple of 16"));
     }
-    let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 32] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 32 bytes"))?;
 
     PyBytes::new_with(py, data.len(), |buf| {
         buf.copy_from_slice(data);
@@ -129,64 +141,192 @@ fn ige256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[
     Ok(())
 }
 
-/// AES-256-CTR Encryption / Decryption
+/// AES-256-CTR Encryption / Decryption with In-Place IV and State updates
 #[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ctr256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
+#[pyo3(signature = (data, key, iv, state = None))]
+fn ctr256_encrypt<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    key: &[u8],
+    iv: &Bound<'_, PyAny>,
+    state: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Bound<'py, PyBytes>> {
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 16] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 16 bytes"))?;
 
-    PyBytes::new_with(py, data.len(), |buf| {
-        buf.copy_from_slice(data);
-        if buf.len() >= GIL_RELEASE_THRESHOLD {
-            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
+    let is_iv_bytearray = iv.is_instance_of::<PyByteArray>();
+    let mut iv_arr = [0u8; 16];
+    if is_iv_bytearray {
+        let ba = iv.downcast::<PyByteArray>()?;
+        let slice = unsafe { ba.as_bytes() };
+        if slice.len() < 16 {
+            return Err(PyValueError::new_err("IV must be at least 16 bytes"));
+        }
+        iv_arr.copy_from_slice(&slice[..16]);
+    } else {
+        let b = iv.extract::<&[u8]>()?;
+        if b.len() < 16 {
+            return Err(PyValueError::new_err("IV must be at least 16 bytes"));
+        }
+        iv_arr.copy_from_slice(&b[..16]);
+    }
+
+    let mut st_arr = [0u8; 1];
+    let is_st_bytearray = if let Some(st) = state {
+        if st.is_instance_of::<PyByteArray>() {
+            let ba = st.downcast::<PyByteArray>()?;
+            let slice = unsafe { ba.as_bytes() };
+            if !slice.is_empty() {
+                st_arr[0] = slice[0];
+            }
+            true
+        } else {
+            let b = st.extract::<&[u8]>()?;
+            if !b.is_empty() {
+                st_arr[0] = b[0];
+            }
+            false
+        }
+    } else {
+        false
+    };
+
+    let res = PyBytes::new_with(py, data.len(), |buf| {
+        if data.len() >= GIL_RELEASE_THRESHOLD {
+            let mut raw_out = RawSlice(buf.as_mut_ptr(), buf.len());
+            let mut in_raw = RawConstSlice(data.as_ptr(), data.len());
             py.allow_threads(move || {
-                let s = unsafe { raw.as_mut_slice() };
-                let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-                state.process_inplace(s);
+                let out_slice = unsafe { raw_out.as_mut_slice() };
+                let in_slice = unsafe { in_raw.as_slice() };
+                ctr_internal::ctr256_process(in_slice, &key_arr, &mut iv_arr, &mut st_arr, out_slice);
             });
         } else {
-            let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-            state.process_inplace(buf);
+            ctr_internal::ctr256_process(data, &key_arr, &mut iv_arr, &mut st_arr, buf);
         }
         Ok(())
-    })
+    })?;
+
+    if is_iv_bytearray {
+        let ba = iv.downcast::<PyByteArray>()?;
+        let slice = unsafe { ba.as_bytes_mut() };
+        slice[..16].copy_from_slice(&iv_arr);
+    }
+
+    if is_st_bytearray {
+        if let Some(st) = state {
+            let ba = st.downcast::<PyByteArray>()?;
+            let slice = unsafe { ba.as_bytes_mut() };
+            if !slice.is_empty() {
+                slice[0] = st_arr[0];
+            }
+        }
+    }
+
+    Ok(res)
 }
 
 /// AES-256-CTR Decryption (Symmetric to encryption)
 #[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ctr256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
-    ctr256_encrypt(py, data, key, iv)
+#[pyo3(signature = (data, key, iv, state = None))]
+fn ctr256_decrypt<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    key: &[u8],
+    iv: &Bound<'_, PyAny>,
+    state: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    ctr256_encrypt(py, data, key, iv, state)
 }
 
 /// In-Place AES-256-CTR Processing
 #[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ctr256_encrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
+#[pyo3(signature = (data, key, iv, state = None))]
+fn ctr256_encrypt_inplace(
+    py: Python<'_>,
+    data: &Bound<'_, PyByteArray>,
+    key: &[u8],
+    iv: &Bound<'_, PyAny>,
+    state: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
     let key_arr: [u8; 32] = key.try_into().map_err(|_| PyValueError::new_err("Key must be 32 bytes"))?;
-    let iv_arr: [u8; 16] = iv.try_into().map_err(|_| PyValueError::new_err("IV must be 16 bytes"))?;
+
+    let is_iv_bytearray = iv.is_instance_of::<PyByteArray>();
+    let mut iv_arr = [0u8; 16];
+    if is_iv_bytearray {
+        let ba = iv.downcast::<PyByteArray>()?;
+        let slice = unsafe { ba.as_bytes() };
+        if slice.len() < 16 {
+            return Err(PyValueError::new_err("IV must be at least 16 bytes"));
+        }
+        iv_arr.copy_from_slice(&slice[..16]);
+    } else {
+        let b = iv.extract::<&[u8]>()?;
+        if b.len() < 16 {
+            return Err(PyValueError::new_err("IV must be at least 16 bytes"));
+        }
+        iv_arr.copy_from_slice(&b[..16]);
+    }
+
+    let mut st_arr = [0u8; 1];
+    let is_st_bytearray = if let Some(st) = state {
+        if st.is_instance_of::<PyByteArray>() {
+            let ba = st.downcast::<PyByteArray>()?;
+            let slice = unsafe { ba.as_bytes() };
+            if !slice.is_empty() {
+                st_arr[0] = slice[0];
+            }
+            true
+        } else {
+            let b = st.extract::<&[u8]>()?;
+            if !b.is_empty() {
+                st_arr[0] = b[0];
+            }
+            false
+        }
+    } else {
+        false
+    };
 
     let slice = unsafe { data.as_bytes_mut() };
     if slice.len() >= GIL_RELEASE_THRESHOLD {
         let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
         py.allow_threads(move || {
             let s = unsafe { raw.as_mut_slice() };
-            let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-            state.process_inplace(s);
+            ctr_internal::ctr256_process_inplace(s, &key_arr, &mut iv_arr, &mut st_arr);
         });
     } else {
-        let mut state = Aes256CtrState::new(&key_arr, &iv_arr);
-        state.process_inplace(slice);
+        ctr_internal::ctr256_process_inplace(slice, &key_arr, &mut iv_arr, &mut st_arr);
     }
+
+    if is_iv_bytearray {
+        let ba = iv.downcast::<PyByteArray>()?;
+        let s = unsafe { ba.as_bytes_mut() };
+        s[..16].copy_from_slice(&iv_arr);
+    }
+
+    if is_st_bytearray {
+        if let Some(st) = state {
+            let ba = st.downcast::<PyByteArray>()?;
+            let s = unsafe { ba.as_bytes_mut() };
+            if !s.is_empty() {
+                s[0] = st_arr[0];
+            }
+        }
+    }
+
     Ok(())
 }
 
 /// In-Place AES-256-CTR Decryption (Alias)
 #[pyfunction]
-#[pyo3(signature = (data, key, iv))]
-fn ctr256_decrypt_inplace(py: Python<'_>, data: &Bound<'_, PyByteArray>, key: &[u8], iv: &[u8]) -> PyResult<()> {
-    ctr256_encrypt_inplace(py, data, key, iv)
+#[pyo3(signature = (data, key, iv, state = None))]
+fn ctr256_decrypt_inplace(
+    py: Python<'_>,
+    data: &Bound<'_, PyByteArray>,
+    key: &[u8],
+    iv: &Bound<'_, PyAny>,
+    state: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    ctr256_encrypt_inplace(py, data, key, iv, state)
 }
 
 /// MTProto 2.0 KDF (Key Derivation Function) - Returns (aes_key: bytes, aes_iv: bytes)
@@ -245,7 +385,6 @@ fn kdf_into(
 }
 
 /// Pack MTProto 2.0 Message (Padding -> MsgKey -> KDF -> AES-IGE)
-/// Optimized with PyBytes::new_with (Zero Rust heap allocations)
 #[pyfunction]
 #[pyo3(signature = (auth_key, message, is_outgoing))]
 fn pack_message<'py>(
@@ -263,13 +402,22 @@ fn pack_message<'py>(
     let total_len = 16 + msg_len + total_padding;
 
     PyBytes::new_with(py, total_len, |buf| {
-        pack_internal::pack_message_into(&auth_arr, message, is_outgoing, buf);
+        if total_len >= GIL_RELEASE_THRESHOLD {
+            let mut raw_buf = RawSlice(buf.as_mut_ptr(), buf.len());
+            let mut msg_raw = RawConstSlice(message.as_ptr(), message.len());
+            py.allow_threads(move || {
+                let out_slice = unsafe { raw_buf.as_mut_slice() };
+                let msg_slice = unsafe { msg_raw.as_slice() };
+                pack_internal::pack_message_into(&auth_arr, msg_slice, is_outgoing, out_slice);
+            });
+        } else {
+            pack_internal::pack_message_into(&auth_arr, message, is_outgoing, buf);
+        }
         Ok(())
     })
 }
 
 /// Unpack MTProto 2.0 Message (AES-IGE Decrypt -> MsgKey Check)
-/// Optimized with PyBytes::new_with (Zero Rust heap allocations)
 #[pyfunction]
 #[pyo3(signature = (auth_key, encrypted_packet, is_outgoing))]
 fn unpack_message<'py>(
@@ -288,13 +436,22 @@ fn unpack_message<'py>(
 
     let mut err_msg: Option<&'static str> = None;
     let res = PyBytes::new_with(py, payload_len, |buf| {
-        match pack_internal::unpack_message_into(&auth_arr, encrypted_packet, is_outgoing, buf) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                err_msg = Some(e);
-                Ok(())
+        if payload_len >= GIL_RELEASE_THRESHOLD {
+            let mut raw_buf = RawSlice(buf.as_mut_ptr(), buf.len());
+            let mut pkt_raw = RawConstSlice(encrypted_packet.as_ptr(), encrypted_packet.len());
+            let err = py.allow_threads(move || {
+                let out_slice = unsafe { raw_buf.as_mut_slice() };
+                let pkt_slice = unsafe { pkt_raw.as_slice() };
+                pack_internal::unpack_message_into(&auth_arr, pkt_slice, is_outgoing, out_slice).err()
+            });
+            err_msg = err;
+        } else {
+            match pack_internal::unpack_message_into(&auth_arr, encrypted_packet, is_outgoing, buf) {
+                Ok(_) => {},
+                Err(e) => { err_msg = Some(e); }
             }
         }
+        Ok(())
     })?;
 
     if let Some(e) = err_msg {
@@ -306,7 +463,7 @@ fn unpack_message<'py>(
 /// HyperCrypto Python C-Extension Module
 #[pymodule]
 fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", "0.1.1")?;
+    m.add("__version__", "0.1.2")?;
     m.add_function(wrap_pyfunction!(sha256, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_encrypt, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_decrypt, m)?)?;

@@ -34,13 +34,13 @@ hypercrypto.ige256_decrypt_inplace(buffer: bytearray, key: bytes, iv: bytes) -> 
 
 ### 2. AES-256-CTR (High-Throughput File Streaming & Downloads)
 ```python
-# Immutable Bytes API
-encrypted = hypercrypto.ctr256_encrypt(data: bytes, key: bytes, iv: bytes) -> bytes
-decrypted = hypercrypto.ctr256_decrypt(data: bytes, key: bytes, iv: bytes) -> bytes
+# Immutable Bytes API (supports stream state tracking)
+encrypted = hypercrypto.ctr256_encrypt(data: bytes, key: bytes, iv: bytearray | bytes, state: bytearray = None) -> bytes
+decrypted = hypercrypto.ctr256_decrypt(data: bytes, key: bytes, iv: bytearray | bytes, state: bytearray = None) -> bytes
 
-# In-Place API
-hypercrypto.ctr256_encrypt_inplace(buffer: bytearray, key: bytes, iv: bytes) -> None
-hypercrypto.ctr256_decrypt_inplace(buffer: bytearray, key: bytes, iv: bytes) -> None
+# Zero-Allocation In-Place API
+hypercrypto.ctr256_encrypt_inplace(buffer: bytearray, key: bytes, iv: bytearray | bytes, state: bytearray = None) -> None
+hypercrypto.ctr256_decrypt_inplace(buffer: bytearray, key: bytes, iv: bytearray | bytes, state: bytearray = None) -> None
 ```
 
 ### 3. MTProto 2.0 KDF (Key Derivation Function)
@@ -66,19 +66,19 @@ unpacked_payload = hypercrypto.unpack_message(auth_key: bytes, encrypted_packet:
 > - Methodology: 10,000 warmup runs, 100,000 measured iterations for small packets.
 
 ### AES-256-IGE Small RPC Packets (Latency)
-| Size | TgCrypto (ns) | WarpCrypto (ns) | HyperCrypto Median | HyperCrypto p95 |
-| :--- | :--- | :--- | :--- | :--- |
-| **64 B** | 1,484 ns | 1,086 ns | **362 ns** | **452 ns** |
-| **128 B** | 1,912 ns | 1,104 ns | **478 ns** | **596 ns** |
-| **256 B** | 2,772 ns | 1,280 ns | **711 ns** | **921 ns** |
-| **1 KB** | 8,448 ns | 2,323 ns | **2,112 ns** | **2,809 ns** |
+| Size | TgCrypto (ns) | HyperCrypto Median | HyperCrypto p95 |
+| :--- | :--- | :--- | :--- |
+| **64 B** | 1,484 ns | **362 ns** | **452 ns** |
+| **128 B** | 1,912 ns | **478 ns** | **596 ns** |
+| **256 B** | 2,772 ns | **711 ns** | **921 ns** |
+| **1 KB** | 8,448 ns | **2,112 ns** | **2,809 ns** |
 
 ### AES-256-CTR File Downloads & Streaming (Throughput)
-| Chunk Size | TgCrypto CTR | WarpCrypto CTR | HyperCrypto CTR |
-| :--- | :--- | :--- | :--- |
-| **512 KB (Chunk)** | 56.5 MB/s | 1,098.3 MB/s | **1,283.2 MB/s (1.25 GB/s)** |
-| **10 MB (Media)** | 66.6 MB/s | 704.3 MB/s | **1,223.8 MB/s (1.20 GB/s)** |
-| **100 MB (File)** | Timeout | 606.9 MB/s | **1,327.2 MB/s (1.30 GB/s)** |
+| Chunk Size | TgCrypto CTR | HyperCrypto CTR |
+| :--- | :--- | :--- |
+| **512 KB (Chunk)** | 56.5 MB/s | **1,283.2 MB/s (1.25 GB/s)** |
+| **10 MB (Media)** | 66.6 MB/s | **1,223.8 MB/s (1.20 GB/s)** |
+| **100 MB (File)** | Timeout | **1,327.2 MB/s (1.30 GB/s)** |
 
 ## License
 

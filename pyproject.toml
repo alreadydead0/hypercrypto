@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "hypercrypto"
-version = "0.1.1"
+version = "0.1.2"
 description = "Ultra-fast Next-Generation MTProto 2.0 Cryptographic Engine for Telegram"
 readme = "README.md"
 authors = [
