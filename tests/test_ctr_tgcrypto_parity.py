@@ -2,7 +2,10 @@ import os
 import pytest
 import hypercrypto as H
 import tgcrypto as T
-import warpcrypto as W
+try:
+    import warpcrypto as W
+except ImportError:
+    W = None
 
 TEST_SIZES = [
     1,
@@ -141,6 +144,8 @@ def test_streaming_chunk_lists(chunks):
 
 
 def test_warpcrypto_sanity_comparison():
+    if W is None:
+        pytest.skip("warpcrypto not installed")
     # Verify warpcrypto passes same contracts
     data = os.urandom(100001)
     iv_seed = b"\xaa" * 16
