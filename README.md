@@ -61,24 +61,32 @@ unpacked_payload = hypercrypto.unpack_message(auth_key: bytes, encrypted_packet:
 
 > **Test Environment**:
 > - OS: Windows 11 Pro 64-bit / Linux x86_64
-> - CPU: AMD Athlon Silver 3050U (2 Cores, 2 Threads, AES-NI, AVX2, SHA-NI)
+> - CPU: AMD Athlon Silver 3050U (AES-NI, AVX2, SHA-NI)
 > - Python: Python 3.13 (Anaconda 64-bit)
-> - Methodology: 10,000 warmup runs, 100,000 measured iterations for small packets.
+> - Direct Comparison: **TgCrypto** vs **WarpCrypto** vs **HyperCrypto v0.1.3**
 
-### AES-256-IGE Small RPC Packets (Latency)
-| Size | TgCrypto (ns) | HyperCrypto Median | HyperCrypto p95 |
+### 1. AES-256-IGE RPC & Small Packet Latency
+| Payload Size | TgCrypto | WarpCrypto | **HyperCrypto v0.1.3** | Speedup vs Warp |
+| :--- | :--- | :--- | :--- | :--- |
+| **64 B (Ping/Ack)** | 1.55 µs | 1.06 µs | **449.9 ns** | **2.4x faster** |
+| **1 KB (Message)** | 11.31 µs | 2.86 µs | **2.09 µs** | **1.4x faster** |
+| **64 KB (Payload)** | 669.38 µs | 125.69 µs | **107.29 µs (582 MB/s)** | **1.2x faster** |
+| **1 MB (File Block)** | 11.77 ms | 3.22 ms | **2.34 ms (428 MB/s)** | **1.4x faster** |
+
+### 2. AES-256-CTR File Downloads & Streaming Throughput
+| Chunk Size | TgCrypto CTR | WarpCrypto CTR | **HyperCrypto v0.1.3** |
 | :--- | :--- | :--- | :--- |
-| **64 B** | 1,484 ns | **362 ns** | **452 ns** |
-| **128 B** | 1,912 ns | **478 ns** | **596 ns** |
-| **256 B** | 2,772 ns | **711 ns** | **921 ns** |
-| **1 KB** | 8,448 ns | **2,112 ns** | **2,809 ns** |
+| **64 KB (Chunk)** | 63.0 MB/s | 968.3 MB/s | **1,110.0 MB/s (1.11 GB/s)** |
+| **512 KB (TG Part)** | 68.6 MB/s | 903.4 MB/s | **973.4 MB/s** |
+| **1 MB (Large Part)** | 68.7 MB/s | 648.4 MB/s | **711.1 MB/s** |
+| **10 MB (Media)** | 67.4 MB/s | 406.0 MB/s | **640.4 MB/s** |
 
-### AES-256-CTR File Downloads & Streaming (Throughput)
-| Chunk Size | TgCrypto CTR | HyperCrypto CTR |
-| :--- | :--- | :--- |
-| **512 KB (Chunk)** | 56.5 MB/s | **1,283.2 MB/s (1.25 GB/s)** |
-| **10 MB (Media)** | 66.6 MB/s | **1,223.8 MB/s (1.20 GB/s)** |
-| **100 MB (File)** | Timeout | **1,327.2 MB/s (1.30 GB/s)** |
+### 3. MTProto 2.0 KDF & End-to-End Packets
+| Operation | Python / TgCrypto | WarpCrypto | **HyperCrypto v0.1.3** |
+| :--- | :--- | :--- | :--- |
+| **MTProto 2.0 KDF** | 6,730 ns | 759.3 ns | **467.9 ns (kdf_into) / 561 ns (kdf)** |
+| **Pack Message** | Not Supported | 2.86 µs | **1.45 µs (2.0x faster)** |
+| **Unpack Message** | Not Supported | 2.49 µs | **1.41 µs (1.8x faster)** |
 
 ## License
 

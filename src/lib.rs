@@ -13,7 +13,7 @@ use crate::aes_ige as ige_internal;
 use crate::kdf_core as kdf_internal;
 use crate::pack_core as pack_internal;
 
-const GIL_RELEASE_THRESHOLD: usize = 16384;
+const GIL_RELEASE_THRESHOLD: usize = 65536;
 
 struct RawSlice(*mut u8, usize);
 unsafe impl Send for RawSlice {}
@@ -43,7 +43,7 @@ fn sha256<'py>(py: Python<'py>, data: &[u8]) -> Bound<'py, PyBytes> {
     PyBytes::new(py, &result)
 }
 
-/// AES-256-IGE Encryption (Zero-Rust-Heap-Allocation via PyBytes::new_with)
+/// AES-256-IGE Encryption (Zero-Rust-Heap-Allocation via single-pass PyBytes::new_with)
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
@@ -55,21 +55,22 @@ fn ige256_encrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
     }
 
     PyBytes::new_with(py, data.len(), |buf| {
-        buf.copy_from_slice(data);
         if buf.len() >= GIL_RELEASE_THRESHOLD {
-            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
+            let in_raw = RawConstSlice(data.as_ptr(), data.len());
+            let mut out_raw = RawSlice(buf.as_mut_ptr(), buf.len());
             py.allow_threads(move || {
-                let s = unsafe { raw.as_mut_slice() };
-                ige_internal::ige256_encrypt_inplace(s, &key_arr, &iv_arr);
+                let src = unsafe { in_raw.as_slice() };
+                let dst = unsafe { out_raw.as_mut_slice() };
+                ige_internal::ige256_encrypt_slice(src, dst, &key_arr, &iv_arr);
             });
         } else {
-            ige_internal::ige256_encrypt_inplace(buf, &key_arr, &iv_arr);
+            ige_internal::ige256_encrypt_slice(data, buf, &key_arr, &iv_arr);
         }
         Ok(())
     })
 }
 
-/// AES-256-IGE Decryption (Zero-Rust-Heap-Allocation via PyBytes::new_with)
+/// AES-256-IGE Decryption (Zero-Rust-Heap-Allocation via single-pass PyBytes::new_with)
 #[pyfunction]
 #[pyo3(signature = (data, key, iv))]
 fn ige256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
@@ -81,15 +82,16 @@ fn ige256_decrypt<'py>(py: Python<'py>, data: &[u8], key: &[u8], iv: &[u8]) -> P
     }
 
     PyBytes::new_with(py, data.len(), |buf| {
-        buf.copy_from_slice(data);
         if buf.len() >= GIL_RELEASE_THRESHOLD {
-            let mut raw = RawSlice(buf.as_mut_ptr(), buf.len());
+            let in_raw = RawConstSlice(data.as_ptr(), data.len());
+            let mut out_raw = RawSlice(buf.as_mut_ptr(), buf.len());
             py.allow_threads(move || {
-                let s = unsafe { raw.as_mut_slice() };
-                ige_internal::ige256_decrypt_inplace(s, &key_arr, &iv_arr);
+                let src = unsafe { in_raw.as_slice() };
+                let dst = unsafe { out_raw.as_mut_slice() };
+                ige_internal::ige256_decrypt_slice(src, dst, &key_arr, &iv_arr);
             });
         } else {
-            ige_internal::ige256_decrypt_inplace(buf, &key_arr, &iv_arr);
+            ige_internal::ige256_decrypt_slice(data, buf, &key_arr, &iv_arr);
         }
         Ok(())
     })
@@ -193,7 +195,7 @@ fn ctr256_encrypt<'py>(
     let res = PyBytes::new_with(py, data.len(), |buf| {
         if data.len() >= GIL_RELEASE_THRESHOLD {
             let mut raw_out = RawSlice(buf.as_mut_ptr(), buf.len());
-            let mut in_raw = RawConstSlice(data.as_ptr(), data.len());
+            let in_raw = RawConstSlice(data.as_ptr(), data.len());
             py.allow_threads(move || {
                 let out_slice = unsafe { raw_out.as_mut_slice() };
                 let in_slice = unsafe { in_raw.as_slice() };
@@ -404,7 +406,7 @@ fn pack_message<'py>(
     PyBytes::new_with(py, total_len, |buf| {
         if total_len >= GIL_RELEASE_THRESHOLD {
             let mut raw_buf = RawSlice(buf.as_mut_ptr(), buf.len());
-            let mut msg_raw = RawConstSlice(message.as_ptr(), message.len());
+            let msg_raw = RawConstSlice(message.as_ptr(), message.len());
             py.allow_threads(move || {
                 let out_slice = unsafe { raw_buf.as_mut_slice() };
                 let msg_slice = unsafe { msg_raw.as_slice() };
@@ -438,7 +440,7 @@ fn unpack_message<'py>(
     let res = PyBytes::new_with(py, payload_len, |buf| {
         if payload_len >= GIL_RELEASE_THRESHOLD {
             let mut raw_buf = RawSlice(buf.as_mut_ptr(), buf.len());
-            let mut pkt_raw = RawConstSlice(encrypted_packet.as_ptr(), encrypted_packet.len());
+            let pkt_raw = RawConstSlice(encrypted_packet.as_ptr(), encrypted_packet.len());
             let err = py.allow_threads(move || {
                 let out_slice = unsafe { raw_buf.as_mut_slice() };
                 let pkt_slice = unsafe { pkt_raw.as_slice() };
