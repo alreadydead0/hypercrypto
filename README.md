@@ -57,6 +57,35 @@ packed_packet = hypercrypto.pack_message(auth_key: bytes, message: bytes, is_out
 unpacked_payload = hypercrypto.unpack_message(auth_key: bytes, encrypted_packet: bytes, is_outgoing: bool) -> bytes
 ```
 
+## Benchmarks
+
+### AES-256-CTR Throughput Comparison
+> Measured on AMD Athlon Silver 3050U (AES, AVX2, SSSE3) | Windows 11 | Python 3.13.5 (min of 7 iterations)
+
+#### 1. Zero-Copy In-Place API (`ctr256_encrypt_inplace`)
+| Payload Size | WarpCrypto 2.0.7 | HyperCrypto 0.1.4 | Speedup vs Warp |
+| :--- | :--- | :--- | :--- |
+| **4 KB** | 1.23 GB/s | **3.67 GB/s** | **2.99x** |
+| **16 KB** | 1.42 GB/s | **4.70 GB/s** | **3.30x** |
+| **64 KB** | 1.44 GB/s | **5.01 GB/s** | **3.46x** |
+| **256 KB** | 1.57 GB/s | **5.15 GB/s** | **3.29x** |
+| **512 KB** | 1.33 GB/s | **5.05 GB/s** | **3.79x** |
+| **1 MB** | 955 MB/s | **4.98 GB/s** | **5.33x** |
+| **4 MB** | 1.05 GB/s | **5.05 GB/s** | **4.82x** |
+| **10 MB** | 887 MB/s | **4.80 GB/s** | **5.54x** |
+| **16 MB** | 881 MB/s | **4.62 GB/s** | **5.37x** |
+
+#### 2. Immutable Bytes API (`ctr256_encrypt`)
+| Payload Size | TgCrypto 1.2.5 | WarpCrypto 2.0.7 | HyperCrypto 0.1.4 | Speedup vs Warp |
+| :--- | :--- | :--- | :--- | :--- |
+| **4 KB** | 72.9 MB/s | 1.02 GB/s | **3.07 GB/s** | **3.02x** |
+| **16 KB** | 81.6 MB/s | 1.26 GB/s | **3.90 GB/s** | **3.09x** |
+| **64 KB** | 84.6 MB/s | 1.47 GB/s | **3.97 GB/s** | **2.69x** |
+| **256 KB** | 79.9 MB/s | 1.52 GB/s | **4.46 GB/s** | **2.93x** |
+| **512 KB** | 77.0 MB/s | 1.17 GB/s | **2.48 GB/s** | **2.12x** |
+| **1 MB** | 85.1 MB/s | 994 MB/s | **1.89 GB/s** | **1.94x** |
+| **10 MB** | 85.6 MB/s | 825 MB/s | **1.89 GB/s** | **2.35x** |
+
 ## License
 
 MIT License. Copyright (c) 2026 alreadydead0.

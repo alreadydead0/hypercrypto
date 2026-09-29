@@ -1,6 +1,6 @@
 [package]
 name = "hypercrypto"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["alreadydead0"]
 description = "Ultra high-performance Rust cryptographic extensions for MTProto 2.0 & Telegram clients"

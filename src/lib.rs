@@ -473,10 +473,45 @@ fn unpack_message<'py>(
     Ok(res)
 }
 
+/// Set hardware dispatch mode override for testing/benchmarks
+/// Modes: "portable", "aesni", "vaes256", "vaes512", or None to reset to auto
+#[pyfunction]
+#[pyo3(signature = (mode = None))]
+fn _set_force_mode(mode: Option<&str>) -> PyResult<()> {
+    match mode {
+        Some(m) => {
+            let val = match m.trim().to_lowercase().as_str() {
+                "vaes512" | "vaes-512" | "512" => ctr_internal::MODE_VAES512,
+                "vaes256" | "vaes-256" | "256" => ctr_internal::MODE_VAES256,
+                "aesni" | "ni" | "sse" => ctr_internal::MODE_AESNI,
+                "portable" | "fallback" => ctr_internal::MODE_PORTABLE,
+                _ => return Err(PyValueError::new_err(format!("Invalid force mode: {m}. Valid modes: portable, aesni, vaes256, vaes512"))),
+            };
+            ctr_internal::set_dispatch_override(val);
+        }
+        None => {
+            ctr_internal::set_dispatch_override(ctr_internal::MODE_UNINIT);
+        }
+    }
+    Ok(())
+}
+
+/// Get currently active hardware dispatch mode
+#[pyfunction]
+fn _get_force_mode() -> &'static str {
+    match ctr_internal::get_dispatch_override() {
+        ctr_internal::MODE_VAES512 => "vaes512",
+        ctr_internal::MODE_VAES256 => "vaes256",
+        ctr_internal::MODE_AESNI => "aesni",
+        ctr_internal::MODE_PORTABLE => "portable",
+        _ => "unknown",
+    }
+}
+
 /// HyperCrypto Python C-Extension Module
 #[pymodule]
 fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("__version__", "0.1.2")?;
+    m.add("__version__", "0.1.4")?;
     m.add_function(wrap_pyfunction!(sha256, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_encrypt, m)?)?;
     m.add_function(wrap_pyfunction!(ige256_decrypt, m)?)?;
@@ -490,5 +525,7 @@ fn hypercrypto(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(kdf_into, m)?)?;
     m.add_function(wrap_pyfunction!(pack_message, m)?)?;
     m.add_function(wrap_pyfunction!(unpack_message, m)?)?;
+    m.add_function(wrap_pyfunction!(_set_force_mode, m)?)?;
+    m.add_function(wrap_pyfunction!(_get_force_mode, m)?)?;
     Ok(())
 }
