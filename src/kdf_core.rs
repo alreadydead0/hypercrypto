@@ -10,13 +10,13 @@ pub fn kdf_calc(auth_key: &[u8; 256], msg_key: &[u8; 16], is_outgoing: bool) -> 
     let mut buf_a = [0u8; 52];
     buf_a[0..16].copy_from_slice(msg_key);
     buf_a[16..52].copy_from_slice(&auth_key[x..x + 36]);
-    let sha_a = Sha256::digest(&buf_a);
+    let sha_a = Sha256::digest(buf_a);
 
     // 2. sha256_b = SHA256(auth_key[40 + x .. 40 + x + 36] + msg_key) (52 bytes)
     let mut buf_b = [0u8; 52];
     buf_b[0..36].copy_from_slice(&auth_key[40 + x..40 + x + 36]);
     buf_b[36..52].copy_from_slice(msg_key);
-    let sha_b = Sha256::digest(&buf_b);
+    let sha_b = Sha256::digest(buf_b);
 
     let mut aes_key = [0u8; 32];
     let mut aes_iv = [0u8; 32];

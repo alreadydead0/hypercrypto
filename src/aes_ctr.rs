@@ -7,17 +7,8 @@ use core::arch::x86_64::*;
 
 #[inline(always)]
 pub fn increment_counter(iv: &mut [u8; 16]) {
-    let low = u64::from_be_bytes(iv[8..16].try_into().unwrap());
-    if let Some(next) = low.checked_add(1) {
-        iv[8..16].copy_from_slice(&next.to_be_bytes());
-    } else {
-        for byte in iv.iter_mut().rev() {
-            *byte = byte.wrapping_add(1);
-            if *byte != 0 {
-                break;
-            }
-        }
-    }
+    let val = u128::from_be_bytes(*iv).wrapping_add(1);
+    *iv = val.to_be_bytes();
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -1,3 +1,5 @@
+#![allow(clippy::manual_is_multiple_of, clippy::needless_range_loop)]
+
 pub mod aes_ctr;
 pub mod aes_ige;
 pub mod kdf_core;
@@ -192,17 +194,23 @@ fn ctr256_encrypt<'py>(
         false
     };
 
+    let mut updated_iv = iv_arr;
+    let mut updated_st = st_arr;
+
     let res = PyBytes::new_with(py, data.len(), |buf| {
         if data.len() >= GIL_RELEASE_THRESHOLD {
             let mut raw_out = RawSlice(buf.as_mut_ptr(), buf.len());
             let in_raw = RawConstSlice(data.as_ptr(), data.len());
-            py.allow_threads(move || {
+            let res = py.allow_threads(move || {
                 let out_slice = unsafe { raw_out.as_mut_slice() };
                 let in_slice = unsafe { in_raw.as_slice() };
                 ctr_internal::ctr256_process(in_slice, &key_arr, &mut iv_arr, &mut st_arr, out_slice);
+                (iv_arr, st_arr)
             });
+            updated_iv = res.0;
+            updated_st = res.1;
         } else {
-            ctr_internal::ctr256_process(data, &key_arr, &mut iv_arr, &mut st_arr, buf);
+            ctr_internal::ctr256_process(data, &key_arr, &mut updated_iv, &mut updated_st, buf);
         }
         Ok(())
     })?;
@@ -210,7 +218,7 @@ fn ctr256_encrypt<'py>(
     if is_iv_bytearray {
         let ba = iv.downcast::<PyByteArray>()?;
         let slice = unsafe { ba.as_bytes_mut() };
-        slice[..16].copy_from_slice(&iv_arr);
+        slice[..16].copy_from_slice(&updated_iv);
     }
 
     if is_st_bytearray {
@@ -218,7 +226,7 @@ fn ctr256_encrypt<'py>(
             let ba = st.downcast::<PyByteArray>()?;
             let slice = unsafe { ba.as_bytes_mut() };
             if !slice.is_empty() {
-                slice[0] = st_arr[0];
+                slice[0] = updated_st[0];
             }
         }
     }
@@ -291,10 +299,13 @@ fn ctr256_encrypt_inplace(
     let slice = unsafe { data.as_bytes_mut() };
     if slice.len() >= GIL_RELEASE_THRESHOLD {
         let mut raw = RawSlice(slice.as_mut_ptr(), slice.len());
-        py.allow_threads(move || {
+        let res = py.allow_threads(move || {
             let s = unsafe { raw.as_mut_slice() };
             ctr_internal::ctr256_process_inplace(s, &key_arr, &mut iv_arr, &mut st_arr);
+            (iv_arr, st_arr)
         });
+        iv_arr = res.0;
+        st_arr = res.1;
     } else {
         ctr_internal::ctr256_process_inplace(slice, &key_arr, &mut iv_arr, &mut st_arr);
     }

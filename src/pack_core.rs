@@ -52,7 +52,7 @@ pub fn unpack_message_into(auth_key: &[u8; 256], encrypted_packet: &[u8], is_out
     hasher.update(&*decrypted);
     let full_sha = hasher.finalize();
 
-    if &full_sha[8..24] != &msg_key[..] {
+    if full_sha[8..24] != msg_key[..] {
         return Err("Invalid msg_key: checksum verification failed");
     }
 
