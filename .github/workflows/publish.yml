@@ -41,7 +41,9 @@ jobs:
           pip install maturin pytest tgcrypto
 
       - name: Build HyperCrypto in release mode
-        run: maturin develop --release
+        run: |
+          maturin build --release --out target/test_wheel
+          pip install target/test_wheel/*.whl
 
       - name: Run Test Suite
         env:
